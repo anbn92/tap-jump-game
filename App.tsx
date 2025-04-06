@@ -6,140 +6,315 @@
  * @format
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   SafeAreaView,
   StatusBar,
   StyleSheet,
-  Text,
-  View,
   TouchableWithoutFeedback,
   Animated,
-  Dimensions,
-  Image,
+  View,
 } from 'react-native';
 
-const { width, height } = Dimensions.get('window');
+// Import components
+import Player from './src/components/Player';
+import Obstacle from './src/components/Obstacle';
+import Ground from './src/components/Ground';
+import Background from './src/components/Background';
+import { GameTitle, GameOver, ScoreDisplay } from './src/components/UI';
 
-// Game constants
-const GRAVITY = 0.8;
-const JUMP_FORCE = -15;
-const GROUND_HEIGHT = 60;
-const PLAYER_WIDTH = 50;
-const PLAYER_HEIGHT = 50;
-const OBSTACLE_WIDTH = 50;
-const BASE_OBSTACLE_SPEED = 2000; // Base speed (higher is slower)
-
-// Obstacle types
-const OBSTACLE_TYPES = [
-  { height: 80, color: '#228B22' },  // Basic obstacle (tall)
-  { height: 50, color: '#8B0000' },  // Short obstacle (fast)
-  { height: 100, color: '#4B0082' }, // Tall obstacle
-];
+// Import game constants and types
+import {
+  GRAVITY,
+  JUMP_FORCE,
+  GROUND_HEIGHT,
+  PLAYER_WIDTH,
+  PLAYER_HEIGHT,
+  OBSTACLE_WIDTH,
+  BASE_OBSTACLE_SPEED,
+  SCREEN_WIDTH,
+  SCREEN_HEIGHT,
+  OBSTACLE_TYPES,
+  OBSTACLE_PATTERNS,
+  MAX_DIFFICULTY,
+  DIFFICULTY_INCREMENT,
+  DIFFICULTY_INTERVAL
+} from './src/game/constants';
+import { 
+  ObstacleType, 
+  Obstacle as ObstacleInterface,
+  GameState,
+  PlayerState,
+  CollisionData
+} from './src/game/types';
 
 function App(): React.JSX.Element {
   // Game state
-  const [gameStarted, setGameStarted] = useState(false);
-  const [score, setScore] = useState(0);
-  const [highScore, setHighScore] = useState(0);
-  const [gameOver, setGameOver] = useState(false);
-  const [difficulty, setDifficulty] = useState(1);
-  const [currentObstacleType, setCurrentObstacleType] = useState(OBSTACLE_TYPES[0]);
+  const [gameState, setGameState] = useState<GameState>({
+    gameStarted: false,
+    gameOver: false,
+    score: 0,
+    highScore: 0,
+    difficulty: 1,
+  });
   
-  // Animation values
-  const playerY = useRef(new Animated.Value(height / 2)).current;
-  const playerYValue = useRef(height / 2);
+  // Track all active obstacles
+  const [obstacles, setObstacles] = useState<ObstacleInterface[]>([]);
+  
+  // Player state
+  const playerY = useRef(new Animated.Value(SCREEN_HEIGHT / 2)).current;
+  const playerYValue = useRef(SCREEN_HEIGHT / 2);
   const velocity = useRef(0);
-  const obstacleX = useRef(new Animated.Value(width)).current;
-  const obstacleXValue = useRef(width);
-  const obstacleTimer = useRef<NodeJS.Timeout | null>(null);
   
-  // Add listeners to track animation values
+  // Player state object
+  const player: PlayerState = {
+    y: playerY,
+    yValue: playerYValue,
+    velocity: velocity,
+  };
+  
+  // Add listeners to track player position
   useEffect(() => {
-    // Add listener for playerY
     const playerYListener = playerY.addListener(({ value }) => {
       playerYValue.current = value;
-    });
-    
-    // Add listener for obstacleX
-    const obstacleXListener = obstacleX.addListener(({ value }) => {
-      obstacleXValue.current = value;
     });
     
     // Clean up listeners
     return () => {
       playerY.removeListener(playerYListener);
-      obstacleX.removeListener(obstacleXListener);
     };
-  }, [playerY, obstacleX]);
+  }, [playerY]);
   
-  // Start the game
-  const startGame = () => {
-    setGameStarted(true);
-    setGameOver(false);
-    setScore(0);
-    setDifficulty(1);
-    velocity.current = 0;
-    playerY.setValue(height / 2);
-    obstacleX.setValue(width);
-    setCurrentObstacleType(OBSTACLE_TYPES[0]);
+  // Get a random obstacle type based on probability
+  const getRandomObstacleType = useCallback((): ObstacleType => {
+    const totalProbability = OBSTACLE_TYPES.reduce((sum, type) => sum + type.probability, 0);
+    const random = Math.random() * totalProbability;
     
-    spawnObstacle();
-  };
-  
-  // Handle player jump
-  const jump = () => {
-    if (gameStarted && !gameOver) {
-      velocity.current = JUMP_FORCE;
-    } else if (!gameStarted) {
-      startGame();
-    } else if (gameOver) {
-      startGame();
+    let cumulativeProbability = 0;
+    for (const type of OBSTACLE_TYPES) {
+      cumulativeProbability += type.probability;
+      if (random <= cumulativeProbability) {
+        return type;
+      }
     }
-  };
-  
-  // Spawn an obstacle
-  const spawnObstacle = () => {
-    // Reset obstacle position
-    obstacleX.setValue(width);
     
-    // Choose a random obstacle type
-    const randomType = OBSTACLE_TYPES[Math.floor(Math.random() * OBSTACLE_TYPES.length)];
-    setCurrentObstacleType(randomType);
+    // Default to first type if something goes wrong
+    return OBSTACLE_TYPES[0];
+  }, []);
+  
+  // Create a new obstacle
+  const createObstacle = useCallback((offsetX = 0): ObstacleInterface => {
+    const type = getRandomObstacleType();
+    const x = new Animated.Value(SCREEN_WIDTH + offsetX);
+    // Don't use useRef here, create a simple mutable object instead
+    const xValue = { current: SCREEN_WIDTH + offsetX };
+    
+    // Add listener to track x position
+    x.addListener(({ value }) => {
+      xValue.current = value;
+    });
+    
+    return {
+      id: `obstacle-${Date.now()}-${Math.random()}`,
+      type,
+      x,
+      xValue,
+      active: true,
+      passed: false,
+    };
+  }, [getRandomObstacleType]);
+  
+  // Spawn obstacles (single or patterns)
+  const spawnObstacles = useCallback(() => {
+    console.log('Spawning obstacles...');
+    // 30% chance to spawn a pattern instead of a single obstacle
+    const usePattern = Math.random() < 0.3;
+    
+    if (usePattern) {
+      // Choose a pattern based on probability
+      const totalProbability = OBSTACLE_PATTERNS.reduce(
+        (sum, pattern) => sum + pattern.probability, 
+        0
+      );
+      const random = Math.random() * totalProbability;
+      
+      let cumulativeProbability = 0;
+      let selectedPattern = OBSTACLE_PATTERNS[0];
+      
+      for (const pattern of OBSTACLE_PATTERNS) {
+        cumulativeProbability += pattern.probability;
+        if (random <= cumulativeProbability) {
+          selectedPattern = pattern;
+          break;
+        }
+      }
+      
+      // Create obstacles from pattern
+      const newObstacles = selectedPattern.obstacles.map(({ type: typeId, offsetX }) => {
+        const obstacleType = OBSTACLE_TYPES.find(t => t.id === typeId) || OBSTACLE_TYPES[0];
+        
+        const x = new Animated.Value(SCREEN_WIDTH + offsetX);
+        // Replace useRef with a simple object
+        const xValue = { current: SCREEN_WIDTH + offsetX };
+        
+        // Add listener to track x position
+        x.addListener(({ value }) => {
+          xValue.current = value;
+        });
+        
+        return {
+          id: `obstacle-${Date.now()}-${Math.random()}`,
+          type: obstacleType,
+          x,
+          xValue,
+          active: true,
+          passed: false,
+        };
+      });
+      
+      setObstacles(prev => [...prev, ...newObstacles]);
+      
+      // Start animation for each obstacle
+      for (const obstacle of newObstacles) {
+        animateObstacle(obstacle);
+      }
+    } else {
+      // Create a single obstacle
+      const newObstacle = createObstacle();
+      setObstacles(prev => [...prev, newObstacle]);
+      animateObstacle(newObstacle);
+    }
+  }, [createObstacle]);
+  
+  // Track if a new obstacle spawn is already scheduled
+  const isSpawningScheduled = useRef(false);
+
+  // Animate obstacle movement
+  const animateObstacle = useCallback((obstacle: ObstacleInterface) => {
+    console.log('Animating obstacle:', obstacle.id, obstacle.type.id);
     
     // Calculate speed based on difficulty
-    const obstacleSpeed = BASE_OBSTACLE_SPEED / difficulty;
+    const obstacleSpeed = BASE_OBSTACLE_SPEED / gameState.difficulty;
     
-    // Animate obstacle moving from right to left
-    Animated.timing(obstacleX, {
-      toValue: -OBSTACLE_WIDTH,
+    Animated.timing(obstacle.x, {
+      toValue: -100, // Move off screen to the left
       duration: obstacleSpeed,
       useNativeDriver: true,
     }).start(({ finished }) => {
-      if (finished && !gameOver) {
-        // Increment score when obstacle is passed
-        setScore(prevScore => {
-          const newScore = prevScore + 1;
+      console.log('Obstacle animation finished:', finished, obstacle.id);
+      if (finished && !gameState.gameOver) {
+        // Remove this obstacle from state
+        setObstacles(prev => prev.filter(o => o.id !== obstacle.id));
+        
+        // Only schedule a new obstacle spawn if none is currently scheduled
+        // and this was the last obstacle of a pattern to leave the screen
+        if (!isSpawningScheduled.current) {
+          isSpawningScheduled.current = true;
           
-          // Increase difficulty every 5 points
-          if (newScore % 5 === 0) {
-            setDifficulty(prev => Math.min(prev + 0.2, 3)); // Cap difficulty at 3x
-          }
+          // Vary the delay based on difficulty to control obstacle density
+          const spawnDelay = 2000 - (gameState.difficulty * 500); // 2000ms at difficulty 1, 500ms at difficulty 3
+          const finalDelay = Math.max(500, spawnDelay); // Ensure minimum 500ms delay
           
-          if (newScore > highScore) {
-            setHighScore(newScore);
-          }
-          return newScore;
-        });
-        // Spawn another obstacle
-        spawnObstacle();
+          setTimeout(() => {
+            if (!gameState.gameOver) {
+              spawnObstacles();
+              isSpawningScheduled.current = false;
+            }
+          }, finalDelay);
+        }
       }
     });
-  };
+  }, [gameState.difficulty, gameState.gameOver, spawnObstacles]);
+  
+  // Start the game
+  const startGame = useCallback(() => {
+    console.log('Starting game...');
+    // Reset game state
+    setGameState({
+      gameStarted: true,
+      gameOver: false,
+      score: 0,
+      highScore: gameState.highScore,
+      difficulty: 1,
+    });
+    
+    // Reset player
+    velocity.current = 0;
+    playerY.setValue(SCREEN_HEIGHT / 2);
+    
+    // Clear obstacles and reset spawn tracker
+    setObstacles([]);
+    isSpawningScheduled.current = false;
+    
+    // Spawn first obstacle
+    console.log('Scheduling first obstacle spawn...');
+    setTimeout(() => {
+      console.log('Spawning first obstacle now');
+      spawnObstacles();
+    }, 1000);
+  }, [gameState.highScore, playerY, spawnObstacles]);
+  
+  // Handle player jump
+  const jump = useCallback(() => {
+    if (gameState.gameStarted && !gameState.gameOver) {
+      velocity.current = JUMP_FORCE;
+    } else if (!gameState.gameStarted) {
+      startGame();
+    } else if (gameState.gameOver) {
+      startGame();
+    }
+  }, [gameState.gameOver, gameState.gameStarted, startGame]);
+  
+  // Check for collision between player and obstacle
+  const checkCollision = useCallback((playerData: CollisionData, obstacle: ObstacleInterface): boolean => {
+    const { playerLeft, playerRight, playerTop, playerBottom } = playerData;
+    
+    const obstacleLeft = obstacle.xValue.current;
+    const obstacleWidth = obstacle.type.width || OBSTACLE_WIDTH;
+    const obstacleRight = obstacleLeft + obstacleWidth;
+    
+    const floatOffset = obstacle.type.floatHeight || 0;
+    const obstacleTop = SCREEN_HEIGHT - GROUND_HEIGHT - obstacle.type.height - floatOffset;
+    const obstacleBottom = SCREEN_HEIGHT - GROUND_HEIGHT - floatOffset;
+    
+    return (
+      playerRight > obstacleLeft &&
+      playerLeft < obstacleRight &&
+      playerBottom > obstacleTop &&
+      playerTop < obstacleBottom
+    );
+  }, []);
+  
+  // Update score when player passes an obstacle
+  const updateScore = useCallback((obstacle: ObstacleInterface) => {
+    if (!obstacle.passed && obstacle.xValue.current < SCREEN_WIDTH / 4 - PLAYER_WIDTH / 2) {
+      // Mark obstacle as passed
+      obstacle.passed = true;
+      
+      // Increment score
+      setGameState(prev => {
+        const newScore = prev.score + 1;
+        const newHighScore = Math.max(newScore, prev.highScore);
+        
+        // Increase difficulty every DIFFICULTY_INTERVAL points
+        let newDifficulty = prev.difficulty;
+        if (newScore % DIFFICULTY_INTERVAL === 0) {
+          newDifficulty = Math.min(prev.difficulty + DIFFICULTY_INCREMENT, MAX_DIFFICULTY);
+        }
+        
+        return {
+          ...prev,
+          score: newScore,
+          highScore: newHighScore,
+          difficulty: newDifficulty,
+        };
+      });
+    }
+  }, []);
   
   // Game physics loop
   useEffect(() => {
-    if (!gameStarted) return;
+    if (!gameState.gameStarted || gameState.gameOver) return;
     
     const gameLoop = setInterval(() => {
       // Apply gravity to velocity
@@ -149,153 +324,85 @@ function App(): React.JSX.Element {
       const newY = playerYValue.current + velocity.current;
       
       // Ground collision
-      if (newY > height - GROUND_HEIGHT - PLAYER_HEIGHT) {
-        playerY.setValue(height - GROUND_HEIGHT - PLAYER_HEIGHT);
+      if (newY > SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT) {
+        playerY.setValue(SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT);
         velocity.current = 0;
       } else {
         playerY.setValue(newY);
       }
       
-      // Collision detection
-      const playerLeft = width / 4;
-      const playerRight = playerLeft + PLAYER_WIDTH;
-      const playerTop = playerYValue.current;
-      const playerBottom = playerTop + PLAYER_HEIGHT;
+      // Player collision data
+      const playerData: CollisionData = {
+        playerLeft: SCREEN_WIDTH / 4,
+        playerRight: SCREEN_WIDTH / 4 + PLAYER_WIDTH,
+        playerTop: playerYValue.current,
+        playerBottom: playerYValue.current + PLAYER_HEIGHT,
+      };
       
-      const obstacleLeft = obstacleXValue.current;
-      const obstacleRight = obstacleLeft + OBSTACLE_WIDTH;
-      const obstacleTop = height - GROUND_HEIGHT - currentObstacleType.height;
-      const obstacleBottom = height - GROUND_HEIGHT;
-      
-      // Check for collision
-      if (
-        playerRight > obstacleLeft &&
-        playerLeft < obstacleRight &&
-        playerBottom > obstacleTop &&
-        playerTop < obstacleBottom
-      ) {
-        // Game over
-        clearInterval(gameLoop);
-        setGameOver(true);
-        obstacleX.stopAnimation();
+      // Check collisions with all obstacles
+      for (const obstacle of obstacles) {
+        // Update score if passed obstacle
+        updateScore(obstacle);
+        
+        // Check for collision
+        if (checkCollision(playerData, obstacle)) {
+          // Game over
+          clearInterval(gameLoop);
+          setGameState(prev => ({ ...prev, gameOver: true }));
+          
+          // Stop all obstacle animations
+          for (const o of obstacles) {
+            o.x.stopAnimation();
+          }
+          
+          break;
+        }
       }
     }, 16); // ~60fps
     
     return () => {
       clearInterval(gameLoop);
-      if (obstacleTimer.current) {
-        clearTimeout(obstacleTimer.current);
-      }
     };
-  }, [gameStarted, gameOver, currentObstacleType.height]);
-  
-  // Cloud decorations
-  const cloud1Position = useRef(new Animated.Value(width)).current;
-  const cloud2Position = useRef(new Animated.Value(width + width / 2)).current;
-  
-  // Animate clouds
-  useEffect(() => {
-    if (!gameStarted) return;
-    
-    const animateCloud = (cloudPosition: Animated.Value, delay: number, duration: number) => {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(cloudPosition, {
-            toValue: -100,
-            duration: duration,
-            useNativeDriver: true,
-          }),
-          Animated.timing(cloudPosition, {
-            toValue: width,
-            duration: 0,
-            useNativeDriver: true,
-          }),
-        ])
-      ).start();
-    };
-    
-    animateCloud(cloud1Position, 0, 15000);
-    animateCloud(cloud2Position, 7500, 20000);
-    
-    return () => {
-      cloud1Position.stopAnimation();
-      cloud2Position.stopAnimation();
-    };
-  }, [gameStarted, cloud1Position, cloud2Position]);
+  }, [
+    gameState.gameStarted, 
+    gameState.gameOver, 
+    obstacles, 
+    checkCollision, 
+    playerY,
+    updateScore
+  ]);
   
   return (
     <TouchableWithoutFeedback onPress={jump}>
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="dark-content" />
         
-        {/* Game title */}
-        {!gameStarted && !gameOver && (
-          <View style={styles.titleContainer}>
-            <Text style={styles.title}>Tap Jump Game</Text>
-            <Text style={styles.subtitle}>Tap to Start</Text>
-          </View>
-        )}
+        {/* Background elements */}
+        <Background gameStarted={gameState.gameStarted} />
         
-        {/* Game over screen */}
-        {gameOver && (
-          <View style={styles.gameOverContainer}>
-            <Text style={styles.gameOverText}>Game Over</Text>
-            <Text style={styles.scoreText}>Score: {score}</Text>
-            <Text style={styles.highScoreText}>High Score: {highScore}</Text>
-            <Text style={styles.restartText}>Tap to Restart</Text>
-          </View>
-        )}
-        
-        {/* Score display */}
-        {gameStarted && !gameOver && (
-          <View style={styles.scoreContainer}>
-            <Text style={styles.scoreText}>Score: {score}</Text>
-            <Text style={styles.difficultyText}>Speed: x{difficulty.toFixed(1)}</Text>
-          </View>
-        )}
-        
-        {/* Decorative clouds */}
-        <Animated.View 
-          style={[
-            styles.cloud,
-            { transform: [{ translateX: cloud1Position }], top: height / 5 }
-          ]}
+        {/* UI Components */}
+        <GameTitle visible={!gameState.gameStarted && !gameState.gameOver} />
+        <GameOver 
+          visible={gameState.gameOver} 
+          score={gameState.score} 
+          highScore={gameState.highScore} 
         />
-        <Animated.View 
-          style={[
-            styles.cloud,
-            { transform: [{ translateX: cloud2Position }], top: height / 7 }
-          ]}
+        <ScoreDisplay 
+          visible={gameState.gameStarted && !gameState.gameOver} 
+          score={gameState.score} 
+          difficulty={gameState.difficulty} 
         />
         
-        {/* Player character */}
-        <Animated.View
-          style={[
-            styles.player,
-            {
-              transform: [{ translateY: playerY }],
-              left: width / 4,
-            },
-          ]}
-        />
+        {/* Player */}
+        <Player player={player} />
         
-        {/* Obstacle */}
-        <Animated.View
-          style={[
-            styles.obstacle,
-            {
-              transform: [{ translateX: obstacleX }],
-              bottom: GROUND_HEIGHT,
-              height: currentObstacleType.height,
-              backgroundColor: currentObstacleType.color,
-            },
-          ]}
-        />
+        {/* Obstacles */}
+        {obstacles.map(obstacle => (
+          <Obstacle key={obstacle.id} obstacle={obstacle} />
+        ))}
         
         {/* Ground */}
-        <View style={[styles.ground, { height: GROUND_HEIGHT }]}>
-          <View style={styles.grassLine} />
-        </View>
+        <Ground />
       </SafeAreaView>
     </TouchableWithoutFeedback>
   );
@@ -305,119 +412,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#87CEEB', // Sky blue background
-  },
-  titleContainer: {
-    position: 'absolute',
-    top: '30%',
-    width: '100%',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 20,
-    textShadowColor: 'rgba(0, 0, 0, 0.2)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 5,
-  },
-  subtitle: {
-    fontSize: 20,
-    color: '#333',
-    textShadowColor: 'rgba(0, 0, 0, 0.1)',
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-  },
-  gameOverContainer: {
-    position: 'absolute',
-    top: '30%',
-    width: '100%',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  gameOverText: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: 'red',
-    marginBottom: 20,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 2, height: 2 },
-    textShadowRadius: 5,
-  },
-  scoreContainer: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.7)',
-    padding: 10,
-    borderRadius: 10,
-    alignItems: 'flex-end',
-  },
-  scoreText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  difficultyText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#555',
-    marginTop: 5,
-  },
-  highScoreText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 10,
-  },
-  restartText: {
-    fontSize: 18,
-    color: '#333',
-    marginTop: 20,
-  },
-  player: {
-    position: 'absolute',
-    width: PLAYER_WIDTH,
-    height: PLAYER_HEIGHT,
-    backgroundColor: '#FF6347', // Tomato color for player
-    borderRadius: 25,
-    borderWidth: 2,
-    borderColor: '#D84315',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 5,
-    elevation: 5,
-  },
-  obstacle: {
-    position: 'absolute',
-    width: OBSTACLE_WIDTH,
-    borderTopLeftRadius: 10,
-    borderTopRightRadius: 10,
-    borderWidth: 2,
-    borderColor: '#333',
-  },
-  ground: {
-    position: 'absolute',
-    bottom: 0,
-    width: '100%',
-    backgroundColor: '#8B4513', // Saddle brown for ground
-  },
-  grassLine: {
-    position: 'absolute',
-    top: 0,
-    height: 5,
-    width: '100%',
-    backgroundColor: '#556B2F', // Dark olive green for grass
-  },
-  cloud: {
-    position: 'absolute',
-    width: 100,
-    height: 50,
-    backgroundColor: 'white',
-    borderRadius: 25,
-    opacity: 0.8,
   },
 });
 
