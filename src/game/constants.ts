@@ -7,8 +7,8 @@ import { Dimensions } from 'react-native';
 const { width, height } = Dimensions.get('window');
 
 // Physics
-export const GRAVITY = 0.8;
-export const JUMP_FORCE = -15;
+export const GRAVITY = 0.6; // Reduced from 0.8 for smoother falling
+export const JUMP_FORCE = -12; // Changed from -15 for more controlled jumps
 
 // Dimensions
 export const GROUND_HEIGHT = 60;
@@ -17,9 +17,9 @@ export const PLAYER_HEIGHT = 50;
 export const OBSTACLE_WIDTH = 50;
 
 // Game settings
-export const BASE_OBSTACLE_SPEED = 2000; // Base speed (higher is slower)
-export const MAX_DIFFICULTY = 3.0;
-export const DIFFICULTY_INCREMENT = 0.2;
+export const BASE_OBSTACLE_SPEED = 2500; // Increased from 2000 for smoother movement (higher is slower)
+export const MAX_DIFFICULTY = 2.5; // Reduced from 3.0 to prevent extreme speed
+export const DIFFICULTY_INCREMENT = 0.15; // Reduced from 0.2 for more gradual difficulty increase
 export const DIFFICULTY_INTERVAL = 5; // Increase difficulty every X points
 
 // Screen dimensions
