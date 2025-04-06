@@ -1,3 +1,44 @@
+# Tap Jump Game
+
+A simple tap jumping game built with React Native for Android devices.
+
+## Description
+
+Tap Jump Game is a fun, addictive mobile game where you control a character that jumps when you tap the screen. The goal is to avoid obstacles and achieve the highest score possible.
+
+## Features
+
+- Simple tap-to-jump controls
+- Multiple obstacle types with different heights and colors
+- Progressive difficulty that increases as your score goes up
+- Attractive visual elements including animated clouds and styled ground
+- Score tracking with high score memory
+
+## Screenshots
+
+(Add screenshots here)
+
+## Installation
+
+1. Clone this repository
+2. Navigate to the project directory
+3. Run `npm install` to install dependencies
+4. Run `npx react-native run-android` to start the game on an Android device or emulator
+
+## Technologies Used
+
+- React Native
+- TypeScript
+- React Native Animated API
+
+## License
+
+MIT
+
+## Author
+
+Your Name
+
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
 # Getting Started
