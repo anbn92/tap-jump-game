@@ -13,6 +13,7 @@ import {
   StyleSheet,
   TouchableWithoutFeedback,
   Animated,
+  Easing,
   View,
 } from 'react-native';
 
@@ -126,7 +127,6 @@ function App(): React.JSX.Element {
   
   // Spawn obstacles (single or patterns)
   const spawnObstacles = useCallback(() => {
-    console.log('Spawning obstacles...');
     // 30% chance to spawn a pattern instead of a single obstacle
     const usePattern = Math.random() < 0.3;
     
@@ -191,17 +191,16 @@ function App(): React.JSX.Element {
 
   // Animate obstacle movement
   const animateObstacle = useCallback((obstacle: ObstacleInterface) => {
-    console.log('Animating obstacle:', obstacle.id, obstacle.type.id);
-    
     // Calculate speed based on difficulty
     const obstacleSpeed = BASE_OBSTACLE_SPEED / gameState.difficulty;
     
+    // Use timing animation for smoother movement
     Animated.timing(obstacle.x, {
       toValue: -100, // Move off screen to the left
       duration: obstacleSpeed,
       useNativeDriver: true,
+      easing: Easing.linear, // Linear movement is smoother for constant speed
     }).start(({ finished }) => {
-      console.log('Obstacle animation finished:', finished, obstacle.id);
       if (finished && !gameState.gameOver) {
         // Remove this obstacle from state
         setObstacles(prev => prev.filter(o => o.id !== obstacle.id));
@@ -228,7 +227,6 @@ function App(): React.JSX.Element {
   
   // Start the game
   const startGame = useCallback(() => {
-    console.log('Starting game...');
     // Reset game state
     setGameState({
       gameStarted: true,
@@ -247,9 +245,7 @@ function App(): React.JSX.Element {
     isSpawningScheduled.current = false;
     
     // Spawn first obstacle
-    console.log('Scheduling first obstacle spawn...');
     setTimeout(() => {
-      console.log('Spawning first obstacle now');
       spawnObstacles();
     }, 1000);
   }, [gameState.highScore, playerY, spawnObstacles]);
@@ -312,56 +308,78 @@ function App(): React.JSX.Element {
     }
   }, []);
   
-  // Game physics loop
+  // Game physics loop using requestAnimationFrame for smoother animation
   useEffect(() => {
     if (!gameState.gameStarted || gameState.gameOver) return;
     
-    const gameLoop = setInterval(() => {
-      // Apply gravity to velocity
-      velocity.current += GRAVITY;
+    let frameId: number;
+    let lastTime = 0;
+    const TARGET_FPS = 60;
+    const TIME_STEP = 1000 / TARGET_FPS;
+    
+    const gameLoop = (timestamp: number) => {
+      if (lastTime === 0) lastTime = timestamp;
+      const deltaTime = timestamp - lastTime;
       
-      // Update player position based on velocity
-      const newY = playerYValue.current + velocity.current;
-      
-      // Ground collision
-      if (newY > SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT) {
-        playerY.setValue(SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT);
-        velocity.current = 0;
-      } else {
-        playerY.setValue(newY);
-      }
-      
-      // Player collision data
-      const playerData: CollisionData = {
-        playerLeft: SCREEN_WIDTH / 4,
-        playerRight: SCREEN_WIDTH / 4 + PLAYER_WIDTH,
-        playerTop: playerYValue.current,
-        playerBottom: playerYValue.current + PLAYER_HEIGHT,
-      };
-      
-      // Check collisions with all obstacles
-      for (const obstacle of obstacles) {
-        // Update score if passed obstacle
-        updateScore(obstacle);
+      if (deltaTime >= TIME_STEP) {
+        // Apply gravity to velocity
+        velocity.current += GRAVITY;
         
-        // Check for collision
-        if (checkCollision(playerData, obstacle)) {
-          // Game over
-          clearInterval(gameLoop);
+        // Update player position based on velocity
+        const newY = playerYValue.current + velocity.current;
+        
+        // Ground collision
+        if (newY > SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT) {
+          playerY.setValue(SCREEN_HEIGHT - GROUND_HEIGHT - PLAYER_HEIGHT);
+          velocity.current = 0;
+        } else {
+          playerY.setValue(newY);
+        }
+        
+        // Player collision data
+        const playerData: CollisionData = {
+          playerLeft: SCREEN_WIDTH / 4,
+          playerRight: SCREEN_WIDTH / 4 + PLAYER_WIDTH,
+          playerTop: playerYValue.current,
+          playerBottom: playerYValue.current + PLAYER_HEIGHT,
+        };
+        
+        // Check collisions with all obstacles
+        let collision = false;
+        for (const obstacle of obstacles) {
+          // Update score if passed obstacle
+          updateScore(obstacle);
+          
+          // Check for collision
+          if (checkCollision(playerData, obstacle)) {
+            collision = true;
+            break;
+          }
+        }
+        
+        if (collision) {
           setGameState(prev => ({ ...prev, gameOver: true }));
           
           // Stop all obstacle animations
           for (const o of obstacles) {
             o.x.stopAnimation();
           }
-          
-          break;
+          return; // Exit the game loop
         }
+        
+        lastTime = timestamp - (deltaTime % TIME_STEP); // Adjust for next frame
       }
-    }, 16); // ~60fps
+      
+      // Continue the animation loop
+      frameId = requestAnimationFrame(gameLoop);
+    };
     
+    // Start the loop
+    frameId = requestAnimationFrame(gameLoop);
+    
+    // Clean up
     return () => {
-      clearInterval(gameLoop);
+      cancelAnimationFrame(frameId);
     };
   }, [
     gameState.gameStarted, 
